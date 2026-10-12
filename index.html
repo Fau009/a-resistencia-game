@@ -125,7 +125,15 @@ h2 { font-size: clamp(1.8rem, 8vw, 2.4rem); }
 .size span { font-size: .66rem; color: var(--muted); }
 .size.special { border-color: color-mix(in srgb, var(--spy) 55%, var(--line)); }
 .names { display: flex; flex-direction: column; gap: 8px; }
-.name-row { display: flex; align-items: center; gap: 10px; }
+.name-row { display: flex; align-items: center; gap: 8px; border-radius: 12px; transition: transform .16s ease; }
+.name-row.dragging { transition: none; position: relative; z-index: 5; background: var(--panel-2); box-shadow: 0 10px 24px rgba(0,0,0,.45), 0 0 0 1.5px var(--gold); }
+.names.sorting .name-row:not(.dragging) input { pointer-events: none; }
+.grip {
+  appearance: none; flex: none; width: 38px; height: 46px; border: 0; background: transparent; color: var(--muted);
+  display: grid; place-items: center; cursor: grab; touch-action: none; border-radius: 10px;
+}
+.grip:active, .dragging .grip { cursor: grabbing; color: var(--gold); }
+.grip svg { width: 18px; height: 18px; fill: currentColor; }
 .seat { width: 26px; flex: none; font-family: var(--mono); font-size: .8rem; color: var(--muted); text-align: right; }
 .name-row input, select {
   flex: 1; min-width: 0; font: inherit; font-size: 1rem; color: var(--fg); background: var(--panel-2);
@@ -370,7 +378,11 @@ const S = {};
 S.setup = () => {
   const n = cfg.n, saved = load();
   const sizes = SIZES[n].map((s, m) => `<div class="size ${needsTwoFails(n, m) ? 'special' : ''}"><b>${s}</b><span>Missão ${m + 1}${needsTwoFails(n, m) ? '<br>2 fracassos' : ''}</span></div>`).join('');
-  const names = Array.from({ length: n }, (_, i) => `<label class="name-row"><span class="seat">${i + 1}</span><input id="nm${i}" data-name="${i}" maxlength="16" autocomplete="off" placeholder="Jogador ${i + 1}" value="${esc(cfg.names[i] || '')}" aria-label="Nome do jogador ${i + 1}"></label>`).join('');
+  const GRIP = '<svg viewBox="0 0 18 18" aria-hidden="true"><circle cx="6" cy="4" r="1.6"/><circle cx="12" cy="4" r="1.6"/><circle cx="6" cy="9" r="1.6"/><circle cx="12" cy="9" r="1.6"/><circle cx="6" cy="14" r="1.6"/><circle cx="12" cy="14" r="1.6"/></svg>';
+  const names = Array.from({ length: n }, (_, i) => {
+    const label = (cfg.names[i] || '').trim() || `Jogador ${i + 1}`;
+    return `<div class="name-row" data-row="${i}"><button type="button" class="grip" data-grip="${i}" aria-label="Mover ${esc(label)}. Use as setas para cima e para baixo.">${GRIP}</button><span class="seat">${i + 1}</span><input id="nm${i}" data-name="${i}" maxlength="16" autocomplete="off" placeholder="Jogador ${i + 1}" value="${esc(cfg.names[i] || '')}" aria-label="Nome do jogador ${i + 1}"></div>`;
+  }).join('');
   const leaderOpts = Array.from({ length: n }, (_, i) => `<option value="${i}" ${cfg.leaderIdx === i ? 'selected' : ''}>${esc((cfg.names[i] || '').trim() || 'Jogador ' + (i + 1))}</option>`).join('');
   const tbtn = TIMERS.map(t => `<button data-timer="${t}" aria-pressed="${cfg.timer === t}">${t ? (t / 60) + ' min' : 'Sem tempo'}</button>`).join('');
   return `<main class="screen">
@@ -389,8 +401,8 @@ S.setup = () => {
     </section>
     <section class="card">
       <span class="label">Nomes, na ordem em que estão sentados</span>
-      <div class="names">${names}</div>
-      <p class="hint">A liderança e a passagem do celular seguem essa ordem.</p>
+      <div class="names" id="names">${names}</div>
+      <p class="hint">Segure os pontinhos ao lado do número e arraste para mudar a ordem. A liderança e a passagem do celular seguem essa ordem.</p>
     </section>
     <section class="card">
       <span class="label">Combinados antes de começar</span>
@@ -866,6 +878,79 @@ document.addEventListener('input', e => {
 document.addEventListener('change', e => {
   if (e.target.id === 'leaderSel') { cfg.leaderIdx = +e.target.value; saveCfg(); }
   if (e.target.dataset && e.target.dataset.name !== undefined && cfg.leader === 'escolha') render();
+});
+
+/* Reordenar os nomes arrastando (ou com as setas do teclado) */
+function moveName(from, to) {
+  const n = cfg.n;
+  if (from === to || to < 0 || to >= n) return;
+  const arr = cfg.names.slice(0, n);
+  const [item] = arr.splice(from, 1); arr.splice(to, 0, item);
+  for (let i = 0; i < n; i++) cfg.names[i] = arr[i];
+  // o primeiro líder escolhido acompanha a pessoa
+  const L = cfg.leaderIdx;
+  if (L === from) cfg.leaderIdx = to;
+  else if (from < L && L <= to) cfg.leaderIdx = L - 1;
+  else if (to <= L && L < from) cfg.leaderIdx = L + 1;
+  saveCfg();
+}
+let sort = null;
+document.addEventListener('pointerdown', e => {
+  const grip = e.target.closest('[data-grip]');
+  if (!grip || ui.screen !== 'setup') return;
+  e.preventDefault();
+  if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+  const list = document.getElementById('names');
+  const rows = [...list.querySelectorAll('.name-row')];
+  const from = +grip.dataset.grip;
+  const rects = rows.map(r => r.getBoundingClientRect());
+  const step = rows.length > 1 ? rects[1].top - rects[0].top : rects[0].height + 8;
+  sort = { from, to: from, rows, rects, step, startY: e.clientY, startScroll: window.scrollY, y: e.clientY, raf: 0 };
+  rows[from].classList.add('dragging'); list.classList.add('sorting');
+  try { grip.setPointerCapture(e.pointerId); } catch (err) {}
+  try { navigator.vibrate && navigator.vibrate(15); } catch (err) {}
+  const tick = () => { if (!sort) return; autoScroll(); layoutSort(); sort.raf = requestAnimationFrame(tick); };
+  sort.raf = requestAnimationFrame(tick);
+});
+function autoScroll() {
+  const edge = 80, y = sort.y;
+  if (y < edge) window.scrollBy(0, -Math.ceil((edge - y) / 6));
+  else if (y > innerHeight - edge) window.scrollBy(0, Math.ceil((y - (innerHeight - edge)) / 6));
+}
+function layoutSort() {
+  const { from, rows, rects, step } = sort;
+  const dy = (sort.y - sort.startY) + (window.scrollY - sort.startScroll);
+  const minDy = rects[0].top - rects[from].top, maxDy = rects[rects.length - 1].top - rects[from].top;
+  const cdy = Math.max(minDy - 12, Math.min(maxDy + 12, dy));
+  rows[from].style.transform = `translateY(${cdy}px)`;
+  const to = Math.max(0, Math.min(rows.length - 1, from + Math.round(cdy / step)));
+  sort.to = to;
+  rows.forEach((r, j) => {
+    if (j === from) return;
+    let shift = 0;
+    if (from < j && j <= to) shift = -step;
+    else if (to <= j && j < from) shift = step;
+    r.style.transform = shift ? `translateY(${shift}px)` : '';
+  });
+}
+document.addEventListener('pointermove', e => { if (sort) { sort.y = e.clientY; e.preventDefault(); } }, { passive: false });
+function endSort(cancel) {
+  if (!sort) return;
+  cancelAnimationFrame(sort.raf);
+  const { from, to } = sort; sort = null;
+  if (!cancel) moveName(from, to);
+  render();
+}
+document.addEventListener('pointerup', () => endSort(false));
+document.addEventListener('pointercancel', () => endSort(true));
+document.addEventListener('keydown', e => {
+  const grip = e.target.closest && e.target.closest('[data-grip]');
+  if (!grip || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+  e.preventDefault();
+  const from = +grip.dataset.grip, to = from + (e.key === 'ArrowUp' ? -1 : 1);
+  if (to < 0 || to >= cfg.n) return;
+  moveName(from, to); render();
+  const g = document.querySelector(`[data-grip="${to}"]`); if (g) g.focus();
 });
 
 /* Manter a tela acesa durante a partida */
