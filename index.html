@@ -267,6 +267,8 @@ h2 { font-size: clamp(1.8rem, 8vw, 2.4rem); }
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
 </style>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icones/apple-touch-icon.png">
 </head>
 <body>
 <div class="app" id="app"></div>
@@ -426,6 +428,7 @@ S.setup = () => {
     </section>
     ${ui.err ? `<p class="error" role="alert">${esc(ui.err)}</p>` : ''}
     <div class="actions"><button class="btn gold" data-act="start">Começar partida</button></div>
+    <p class="app-links" data-app-links></p>
   </main>`;
 };
 
@@ -964,5 +967,6 @@ window.__resistencia = { get G() { return G; }, get ui() { return ui; }, act };
 render();
 })();
 </script>
+<script src="pwa.js" data-observar defer></script>
 </body>
 </html>
